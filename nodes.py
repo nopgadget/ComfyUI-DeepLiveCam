@@ -6,6 +6,7 @@ import sys
 import logging
 from typing import Any
 import onnxruntime
+from comfy.utils import ProgressBar
 
 # Add DeepLiveCam to path
 dlc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DeepLiveCam")
@@ -165,43 +166,57 @@ class DeepLiveCamNode:
             logger.warning("No source face loaded. Please provide a valid source image with a detectable face.")
             return (image,)
         
-        # Convert from tensor to numpy array (ComfyUI uses RGB format)
-        # First frame from batch if it's a batch
-        if len(image.shape) == 4:
-            image_np = image[0].cpu().numpy()
-        else:
-            image_np = image.cpu().numpy()
-        
-        # Convert from float [0,1] to uint8 [0,255] and RGB to BGR for OpenCV
-        frame = (image_np * 255).astype(np.uint8)
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        
         # Set global variables for deep live cam
         dlc_globals.many_faces = many_faces
         dlc_globals.mouth_mask = mouth_mask
         
-        # Process the frame
-        if many_faces:
-            target_faces = get_many_faces(frame)
-            if target_faces:
-                for target_face in target_faces:
-                    frame = swap_face(self.source_face, target_face, frame)
-        else:
-            target_face = get_one_face(frame)
-            if target_face:
-                frame = swap_face(self.source_face, target_face, frame)
+        # Handle batch processing - create output tensor with same batch size
+        batch_size = image.shape[0]
+        device = image.device
+        
+        # Initialize progress bar
+        pbar = ProgressBar(batch_size)
+        
+        # Convert entire batch to numpy at once - more efficient
+        frames_np = image.cpu().numpy()
+        
+        # Convert from float [0,1] to uint8 [0,255] for entire batch at once
+        frames_uint8 = (frames_np * 255).astype(np.uint8)
+        
+        # Process each image in the batch
+        result_batch = []
+        for i in range(batch_size):
+            # Get single image from batch
+            frame_uint8 = frames_uint8[i]
+            
+            # Convert RGB to BGR for OpenCV
+            frame = cv2.cvtColor(frame_uint8, cv2.COLOR_RGB2BGR)
+            
+            # Process the frame
+            if many_faces:
+                target_faces = get_many_faces(frame)
+                if target_faces:
+                    for target_face in target_faces:
+                        frame = swap_face(self.source_face, target_face, frame)
             else:
-                logger.warning("No face detected in input frame")
+                target_face = get_one_face(frame)
+                if target_face:
+                    frame = swap_face(self.source_face, target_face, frame)
+                else:
+                    logger.warning(f"No face detected in input frame {i}")
+            
+            # Convert back to RGB for ComfyUI
+            result_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            result_batch.append(result_rgb)
+            
+            # Update progress bar
+            pbar.update(1)
         
-        # Convert back to RGB for ComfyUI and normalize to [0,1]
-        result = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        # Stack results and convert back to float32 [0,1] all at once
+        result_stacked = np.stack(result_batch).astype(np.float32) / 255.0
         
-        # Convert back to tensor, preserving the original shape
-        if len(image.shape) == 4:
-            # If input was batched, maintain batch dimension
-            result_tensor = torch.from_numpy(result).unsqueeze(0).to(image.device)
-        else:
-            result_tensor = torch.from_numpy(result).to(image.device)
+        # Convert all results to tensor at once
+        result_tensor = torch.from_numpy(result_stacked).to(device)
         
         return (result_tensor,)
 
