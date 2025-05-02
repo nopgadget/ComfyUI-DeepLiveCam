@@ -92,9 +92,21 @@ class DeepLiveCamNode:
                 # Explicitly set the model path in the face_swapper module
                 face_swapper.models_dir = self.models_dir
                 
+                # Log the provider being applied
+                logger.info(f"Applying execution provider: {execution_provider}")
+                
+                # Get the face swapper with requested provider
                 self.face_swapper = get_face_swapper()
                 self.initialized = True
-                logger.info(f"Face swapper initialized successfully with provider: {execution_provider}")
+                
+                # Check the actual session info from ONNX Runtime
+                if hasattr(self.face_swapper, 'session') and hasattr(self.face_swapper.session, 'get_providers'):
+                    actual_providers = self.face_swapper.session.get_providers()
+                    if execution_provider not in actual_providers:
+                        logger.warning(f"Requested provider '{execution_provider}' not in actual providers: {actual_providers}")
+                    logger.info(f"Face swapper initialized with actual providers: {actual_providers}")
+                else:
+                    logger.info(f"Face swapper initialized successfully with requested provider: {execution_provider}")
             except Exception as e:
                 logger.error(f"Failed to initialize face swapper: {str(e)}")
                 raise RuntimeError(f"Failed to initialize face swapper: {str(e)}")
