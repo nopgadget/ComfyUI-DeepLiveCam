@@ -45,6 +45,13 @@ For use with ComfyStream:
 
 This node requires the Deep Live Cam models. The first time you run the node, it will automatically download the required model files.
 
+## Tested Versions
+
+This node has been tested with the following versions:
+- PyTorch 2.5.1+cu118 (NVIDIA GPU)
+- PyTorch 2.5.1 (CPU/Mac)
+- torchvision 0.20.1
+
 ## Performance Tips
 
 - For best performance, select the appropriate execution provider:
@@ -60,3 +67,7 @@ This node requires the Deep Live Cam models. The first time you run the node, it
 - If no face is detected, the original frame will be returned unchanged
 - If you encounter issues with a particular execution provider, try falling back to CPU
 - Check the logs for detailed error information if you encounter issues 
+
+## Credits
+
+This ComfyUI node is based on the [Deep Live Cam](https://github.com/hacksider/Deep-Live-Cam) project by [hacksider](https://github.com/hacksider). The core face swapping functionality and models are from the original repository. This implementation adapts the technology for use within ComfyUI workflows. 
