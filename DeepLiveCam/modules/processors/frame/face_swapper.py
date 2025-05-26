@@ -28,6 +28,9 @@ models_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(abs_dir))), "models"
 )
 
+# Setup detailed logging
+logger = logging.getLogger('DeepLiveCam.FaceSwapper')
+
 
 def pre_check() -> bool:
     download_directory_path = abs_dir
@@ -57,15 +60,67 @@ def pre_start() -> bool:
     return True
 
 
-def get_face_swapper() -> Any:
+def get_face_swapper(providers=None) -> Any:
     global FACE_SWAPPER
 
     with THREAD_LOCK:
         if FACE_SWAPPER is None:
+            logger.info("=== Face Swapper Model Initialization ===")
             model_path = os.path.join(models_dir, "inswapper_128_fp16.onnx")
-            FACE_SWAPPER = insightface.model_zoo.get_model(
-                model_path, providers=execution_providers
-            )
+            logger.info(f"Model path: {model_path}")
+            logger.info(f"Model exists: {os.path.exists(model_path)}")
+            
+            # Use provided providers or fall back to global
+            if providers is not None:
+                use_providers = providers
+                logger.info(f"Using provided execution providers: {use_providers}")
+            else:
+                use_providers = execution_providers
+                logger.info(f"Using global execution providers: {use_providers}")
+            
+            logger.info(f"Final providers to use: {use_providers}")
+            
+            try:
+                # NO FALLBACK - Use exactly what was requested
+                logger.info(f"Calling insightface.model_zoo.get_model with providers: {use_providers}")
+                FACE_SWAPPER = insightface.model_zoo.get_model(
+                    model_path, providers=use_providers
+                )
+                logger.info("insightface.model_zoo.get_model completed successfully")
+                
+                # Debug the actual model session
+                if hasattr(FACE_SWAPPER, 'session'):
+                    logger.info(f"Model session type: {type(FACE_SWAPPER.session)}")
+                    if hasattr(FACE_SWAPPER.session, 'get_providers'):
+                        actual_providers = FACE_SWAPPER.session.get_providers()
+                        logger.info(f"Model session actual providers: {actual_providers}")
+                        
+                        # Verify we got what we asked for
+                        if "CUDAExecutionProvider" in use_providers:
+                            if "CUDAExecutionProvider" not in actual_providers:
+                                error_msg = f"CRITICAL: Requested CUDAExecutionProvider but model session has: {actual_providers}"
+                                logger.error(error_msg)
+                                raise RuntimeError(error_msg)
+                            else:
+                                logger.info("SUCCESS: CUDA provider successfully loaded in model session")
+                    else:
+                        logger.warning("Model session doesn't have get_providers method")
+                else:
+                    logger.warning("Model doesn't have session attribute")
+                    
+                logger.info("=== Face Swapper Model Initialization Complete ===")
+                
+            except Exception as e:
+                logger.error("=== Face Swapper Model Initialization FAILED ===")
+                logger.error(f"Error: {str(e)}")
+                logger.error(f"Error type: {type(e).__name__}")
+                logger.error(f"Model path: {model_path}")
+                logger.error(f"Requested providers: {use_providers}")
+                logger.error(f"Full error details:", exc_info=True)
+                logger.error("=== END ERROR DETAILS ===")
+                # Re-raise without any fallback
+                raise
+                
     return FACE_SWAPPER
 
 

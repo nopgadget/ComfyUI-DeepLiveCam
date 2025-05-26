@@ -18,13 +18,125 @@ from .DeepLiveCam.modules.processors.frame.face_swapper import get_face_swapper,
 from .DeepLiveCam.modules.utilities import conditional_download
 from .DeepLiveCam.modules import globals as dlc_globals
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Setup logging with more detail
 logger = logging.getLogger('DeepLiveCamNode')
+
+def debug_cuda_environment():
+    """Debug CUDA environment and ONNX Runtime setup."""
+    logger.info("=== CUDA Environment Debug ===")
+    
+    # Check CUDA availability in PyTorch
+    logger.info(f"PyTorch CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        logger.info(f"PyTorch CUDA device count: {torch.cuda.device_count()}")
+        logger.info(f"PyTorch CUDA current device: {torch.cuda.current_device()}")
+        logger.info(f"PyTorch CUDA device name: {torch.cuda.get_device_name()}")
+        logger.info(f"PyTorch CUDA version: {torch.version.cuda}")
+    
+    # Check ONNX Runtime providers
+    available_providers = onnxruntime.get_available_providers()
+    logger.info(f"ONNX Runtime available providers: {available_providers}")
+    
+    # Check CUDA DLLs and environment
+    cuda_path = os.environ.get('CUDA_PATH')
+    logger.info(f"CUDA_PATH environment variable: {cuda_path}")
+    
+    path_env = os.environ.get('PATH', '')
+    cuda_paths_in_path = [p for p in path_env.split(os.pathsep) if 'cuda' in p.lower()]
+    logger.info(f"CUDA-related paths in PATH: {cuda_paths_in_path}")
+    
+    # Try to import and test ONNX Runtime CUDA provider directly
+    try:
+        import onnxruntime as ort
+        logger.info(f"ONNX Runtime version: {ort.__version__}")
+        logger.info(f"ONNX Runtime location: {os.path.dirname(ort.__file__)}")
+        
+        # Check if CUDA provider can be created
+        if 'CUDAExecutionProvider' in available_providers:
+            logger.info("Attempting to create CUDA execution provider...")
+            try:
+                # Try to get provider options for CUDA
+                cuda_provider_options = {
+                    'device_id': 0,
+                    'arena_extend_strategy': 'kNextPowerOfTwo',
+                    'gpu_mem_limit': 2 * 1024 * 1024 * 1024,  # 2GB
+                    'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                    'do_copy_in_default_stream': True,
+                }
+                logger.info(f"CUDA provider options: {cuda_provider_options}")
+                
+                # Check specific CUDA DLL availability
+                import ctypes
+                
+                # Try different CUDA runtime versions
+                cuda_dlls_to_try = ['cudart64_110.dll', 'cudart64_11.dll', 'cudart64_118.dll']
+                cuda_dll_found = False
+                for dll_name in cuda_dlls_to_try:
+                    try:
+                        cudart = ctypes.CDLL(dll_name)
+                        logger.info(f"Successfully loaded {dll_name}")
+                        cuda_dll_found = True
+                        break
+                    except Exception as dll_e:
+                        logger.debug(f"Failed to load {dll_name}: {dll_e}")
+                
+                if not cuda_dll_found:
+                    logger.error(f"Failed to load any CUDA runtime DLL from: {cuda_dlls_to_try}")
+                
+                # Try to load ONNX Runtime CUDA provider DLL
+                ort_path = os.path.dirname(ort.__file__)
+                possible_cuda_dll_paths = [
+                    os.path.join(ort_path, 'capi', 'onnxruntime_providers_cuda.dll'),
+                    os.path.join(ort_path, 'onnxruntime_providers_cuda.dll'),
+                    'onnxruntime_providers_cuda.dll'  # Try system PATH
+                ]
+                
+                cuda_provider_dll_found = False
+                for dll_path in possible_cuda_dll_paths:
+                    try:
+                        if os.path.isfile(dll_path):
+                            logger.info(f"ONNX Runtime CUDA provider DLL found at: {dll_path}")
+                            ort_cuda = ctypes.CDLL(dll_path)
+                            logger.info(f"Successfully loaded onnxruntime_providers_cuda.dll from {dll_path}")
+                            cuda_provider_dll_found = True
+                            break
+                    except Exception as dll_e:
+                        logger.debug(f"Failed to load ONNX Runtime CUDA provider from {dll_path}: {dll_e}")
+                
+                if not cuda_provider_dll_found:
+                    logger.error(f"Failed to load onnxruntime_providers_cuda.dll from any location: {possible_cuda_dll_paths}")
+                    # List contents of ONNX Runtime directory for debugging
+                    try:
+                        ort_files = os.listdir(ort_path)
+                        logger.info(f"ONNX Runtime directory contents: {[f for f in ort_files if 'cuda' in f.lower()]}")
+                        
+                        capi_path = os.path.join(ort_path, 'capi')
+                        if os.path.exists(capi_path):
+                            capi_files = os.listdir(capi_path)
+                            logger.info(f"ONNX Runtime capi directory contents: {[f for f in capi_files if 'cuda' in f.lower()]}")
+                    except Exception as e:
+                        logger.error(f"Error listing ONNX Runtime directory: {e}")
+                    
+            except Exception as cuda_e:
+                logger.error(f"CUDA provider creation failed: {cuda_e}")
+                logger.error(f"CUDA error details:", exc_info=True)
+        else:
+            logger.warning("CUDAExecutionProvider not in available providers list")
+            
+    except Exception as ort_e:
+        logger.error(f"ONNX Runtime import/check failed: {ort_e}")
+        logger.error(f"ONNX Runtime error details:", exc_info=True)
+    
+    logger.info("=== End CUDA Environment Debug ===")
 
 def get_available_execution_providers():
     """Get the list of available execution providers for ONNX Runtime."""
+    # Run debug first
+    debug_cuda_environment()
+    
     providers = onnxruntime.get_available_providers()
+    logger.info(f"Raw available providers from ONNX Runtime: {providers}")
+    
     # Convert to more friendly names for UI display
     provider_map = {
         "CPUExecutionProvider": "CPU",
@@ -32,7 +144,8 @@ def get_available_execution_providers():
         "ROCMExecutionProvider": "ROCm (AMD GPU)",
         "CoreMLExecutionProvider": "CoreML (Apple)",
         "DmlExecutionProvider": "DirectML",
-        "OpenVINOExecutionProvider": "OpenVINO"
+        "OpenVINOExecutionProvider": "OpenVINO",
+        "TensorrtExecutionProvider": "TensorRT (NVIDIA)"
     }
     
     available_providers = []
@@ -40,6 +153,7 @@ def get_available_execution_providers():
         friendly_name = provider_map.get(provider, provider)
         available_providers.append((provider, friendly_name))
     
+    logger.info(f"Available providers for UI: {available_providers}")
     return available_providers
 
 class DeepLiveCamNode:
@@ -74,42 +188,97 @@ class DeepLiveCamNode:
     
     def _init_face_swapper(self, execution_provider):
         """Initialize the face swapper module."""
+        logger.info(f"=== Face Swapper Initialization Debug ===")
+        logger.info(f"Requested execution provider: {execution_provider}")
+        logger.info(f"Current provider: {self.current_provider}")
+        logger.info(f"Initialized: {self.initialized}")
+        
         # Reset initialization if provider changes
         if self.current_provider != execution_provider:
+            logger.info("Provider changed, resetting initialization")
             self.initialized = False
             self.current_provider = execution_provider
             
         if not self.initialized:
             try:
-                # Update global execution providers
-                dlc_globals.execution_providers = [execution_provider]
-                self.execution_providers = [execution_provider]
+                # Get available providers
+                available_providers = onnxruntime.get_available_providers()
+                logger.info(f"Available ONNX Runtime providers: {available_providers}")
+                
+                # Check if requested provider is available - NO FALLBACK
+                if execution_provider not in available_providers:
+                    error_msg = f"Requested provider '{execution_provider}' not available. Available providers: {available_providers}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                
+                logger.info(f"Requested provider '{execution_provider}' is available")
+                
+                # Set up provider configuration
+                if execution_provider == "CUDAExecutionProvider":
+                    logger.info("Setting up CUDA provider configuration")
+                    dlc_globals.execution_providers = ["CUDAExecutionProvider"]
+                    provider_options = {
+                        'device_id': 0,
+                        'arena_extend_strategy': 'kNextPowerOfTwo',
+                        'gpu_mem_limit': 4 * 1024 * 1024 * 1024,  # 4GB limit
+                        'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                        'do_copy_in_default_stream': True,
+                    }
+                    logger.info(f"CUDA provider options: {provider_options}")
+                else:
+                    logger.info(f"Setting up {execution_provider} provider configuration")
+                    dlc_globals.execution_providers = [execution_provider]
+                
+                self.execution_providers = dlc_globals.execution_providers
+                logger.info(f"Global execution providers set to: {dlc_globals.execution_providers}")
                 
                 # Reset and initialize face swapper with new provider
+                logger.info("Resetting face swapper module")
                 from .DeepLiveCam.modules.processors.frame import face_swapper
                 face_swapper.FACE_SWAPPER = None
                 
                 # Explicitly set the model path in the face_swapper module
                 face_swapper.models_dir = self.models_dir
+                logger.info(f"Face swapper models directory set to: {self.models_dir}")
                 
                 # Log the provider being applied
                 logger.info(f"Applying execution provider: {execution_provider}")
+                logger.info(f"Provider configuration: {dlc_globals.execution_providers}")
                 
-                # Get the face swapper with requested provider
-                self.face_swapper = get_face_swapper()
+                # Get the face swapper with requested provider - NO FALLBACK
+                logger.info("Calling get_face_swapper()...")
+                self.face_swapper = get_face_swapper(providers=dlc_globals.execution_providers)
+                logger.info("get_face_swapper() completed successfully")
+                
                 self.initialized = True
                 
                 # Check the actual session info from ONNX Runtime
                 if hasattr(self.face_swapper, 'session') and hasattr(self.face_swapper.session, 'get_providers'):
                     actual_providers = self.face_swapper.session.get_providers()
-                    if execution_provider not in actual_providers:
-                        logger.warning(f"Requested provider '{execution_provider}' not in actual providers: {actual_providers}")
-                    logger.info(f"Face swapper initialized with actual providers: {actual_providers}")
+                    logger.info(f"Face swapper session actual providers: {actual_providers}")
+                    
+                    # NO FALLBACK - If we requested CUDA and didn't get it, raise an error
+                    if execution_provider == "CUDAExecutionProvider" and execution_provider not in actual_providers:
+                        error_msg = f"CRITICAL: Requested CUDA provider but got {actual_providers}. CUDA initialization failed!"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
+                        
+                    logger.info(f"SUCCESS: Face swapper initialized with correct providers: {actual_providers}")
+                elif hasattr(self.face_swapper, 'providers'):
+                    logger.info(f"Face swapper providers attribute: {self.face_swapper.providers}")
                 else:
-                    logger.info(f"Face swapper initialized successfully with requested provider: {execution_provider}")
+                    logger.warning("Cannot determine actual providers used by face swapper")
+                    
+                logger.info("=== Face Swapper Initialization Complete ===")
+                    
             except Exception as e:
-                logger.error(f"Failed to initialize face swapper: {str(e)}")
-                raise RuntimeError(f"Failed to initialize face swapper: {str(e)}")
+                logger.error(f"=== FACE SWAPPER INITIALIZATION FAILED ===")
+                logger.error(f"Error: {str(e)}")
+                logger.error(f"Error type: {type(e).__name__}")
+                logger.error(f"Full error details:", exc_info=True)
+                logger.error(f"=== END ERROR DETAILS ===")
+                # Re-raise the original error without any fallback
+                raise
     
     def _process_source_image(self, source_tensor):
         """Extract face from the source tensor image."""
