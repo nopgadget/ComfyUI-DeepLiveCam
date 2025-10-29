@@ -45,6 +45,16 @@ For use with ComfyStream:
 
 This node requires the Deep Live Cam models. The first time you run the node, it will automatically download the required model files.
 
+### Important: NumPy Compatibility
+
+This node requires **NumPy < 2.0** due to compatibility requirements with onnxruntime. If you encounter an `AttributeError: _ARRAY_API not found` error, you need to downgrade NumPy:
+
+```bash
+pip install "numpy<2.0"
+```
+
+The requirements.txt file includes this constraint, but if you have NumPy 2.x already installed, you may need to manually downgrade it.
+
 ## Tested Versions
 
 This node has been tested with the following versions:
@@ -64,6 +74,13 @@ This node has been tested with the following versions:
 
 ## Troubleshooting
 
+### Common Issues
+
+**`AttributeError: _ARRAY_API not found` when loading the node:**
+- This indicates NumPy 2.x is installed but onnxruntime requires NumPy 1.x
+- Solution: Downgrade NumPy with `pip install "numpy<2.0"`
+
+**General Tips:**
 - If no face is detected, the original frame will be returned unchanged
 - If you encounter issues with a particular execution provider, try falling back to CPU
 - Check the logs for detailed error information if you encounter issues 
